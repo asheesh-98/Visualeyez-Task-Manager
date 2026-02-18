@@ -1,10 +1,21 @@
 export type Priority = 'low' | 'medium' | 'high';
 export type TaskStatus = 'pending' | 'in-progress' | 'completed';
+export type RecurrenceType = 'none' | 'daily' | 'weekly' | 'monthly' | 'custom';
+export type ViewMode = 'list' | 'grid' | 'calendar';
 
 export interface Subtask {
   id: string;
   title: string;
   completed: boolean;
+}
+
+export interface ActivityEntry {
+  id: string;
+  taskId: string;
+  taskTitle: string;
+  action: 'created' | 'updated' | 'deleted' | 'completed' | 'status_changed' | 'subtask_completed';
+  detail?: string;
+  timestamp: string;
 }
 
 export interface Task {
@@ -17,6 +28,7 @@ export interface Task {
   tags: string[];
   dueDate: string | null;
   subtasks: Subtask[];
+  recurrence: RecurrenceType;
   createdAt: string;
   updatedAt: string;
 }
