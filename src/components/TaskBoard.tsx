@@ -6,7 +6,8 @@ import TaskFilters from './TaskFilters';
 import TaskSidebar from './TaskSidebar';
 import { useTaskStore } from '@/hooks/useTaskStore';
 import { Button } from '@/components/ui/button';
-import { Plus, ListTodo, Menu, X } from 'lucide-react';
+import { Plus, ListTodo, Menu } from 'lucide-react';
+import ThemeToggle from './ThemeToggle';
 import { AnimatePresence, motion } from 'framer-motion';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -105,10 +106,13 @@ const TaskBoard = () => {
                 </p>
               </div>
             </div>
-            <Button onClick={() => { setEditTask(null); setFormOpen(true); }} className="gap-2 shadow-soft">
-              <Plus size={16} />
-              <span className="hidden sm:inline">New Task</span>
-            </Button>
+            <div className="flex items-center gap-2">
+              <ThemeToggle />
+              <Button onClick={() => { setEditTask(null); setFormOpen(true); }} className="gap-2 shadow-soft">
+                <Plus size={16} />
+                <span className="hidden sm:inline">New Task</span>
+              </Button>
+            </div>
           </div>
           <TaskFilters
             search={search}
