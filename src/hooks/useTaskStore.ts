@@ -1,99 +1,157 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Task, Subtask, Priority, TaskStatus, ActivityEntry } from '@/types/task';
-
-const STORAGE_KEY = 'taskflow-tasks';
-const ACTIVITY_KEY = 'taskflow-activity';
-
-const generateId = () => Math.random().toString(36).substring(2, 12);
-
-const loadTasks = (): Task[] => {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return stored ? JSON.parse(stored) : [];
-  } catch { return []; }
-};
-
-const saveTasks = (tasks: Task[]) => localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
-
-const loadActivity = (): ActivityEntry[] => {
-  try {
-    const stored = localStorage.getItem(ACTIVITY_KEY);
-    return stored ? JSON.parse(stored) : [];
-  } catch { return []; }
-};
-
-const saveActivity = (activity: ActivityEntry[]) =>
-  localStorage.setItem(ACTIVITY_KEY, JSON.stringify(activity.slice(0, 200)));
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
 
 export function useTaskStore() {
-  const [tasks, setTasks] = useState<Task[]>(loadTasks);
-  const [activity, setActivity] = useState<ActivityEntry[]>(loadActivity);
+  const { user } = useAuth();
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [activity, setActivity] = useState<ActivityEntry[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => { saveTasks(tasks); }, [tasks]);
-  useEffect(() => { saveActivity(activity); }, [activity]);
+  // Fetch tasks from database
+  useEffect(() => {
+    if (!user) { setTasks([]); setActivity([]); setLoading(false); return; }
 
-  const log = useCallback((taskId: string, taskTitle: string, action: ActivityEntry['action'], detail?: string) => {
-    setActivity(prev => [{ id: generateId(), taskId, taskTitle, action, detail, timestamp: new Date().toISOString() }, ...prev].slice(0, 200));
-  }, []);
+    const fetchData = async () => {
+      setLoading(true);
+      const [tasksRes, activityRes] = await Promise.all([
+        supabase.from('tasks').select('*').order('sort_order', { ascending: true }).order('created_at', { ascending: false }),
+        supabase.from('activity_log').select('*').order('created_at', { ascending: false }).limit(200),
+      ]);
 
-  const addTask = useCallback((task: Omit<Task, 'id' | 'createdAt' | 'updatedAt'>) => {
-    const now = new Date().toISOString();
-    const newTask: Task = { ...task, id: generateId(), createdAt: now, updatedAt: now };
-    setTasks(prev => [newTask, ...prev]);
-    log(newTask.id, newTask.title, 'created');
-    return newTask;
-  }, [log]);
-
-  const updateTask = useCallback((id: string, updates: Partial<Task>) => {
-    setTasks(prev => prev.map(t => {
-      if (t.id !== id) return t;
-      const updated = { ...t, ...updates, updatedAt: new Date().toISOString() };
-      if (updates.status && updates.status !== t.status) {
-        log(id, t.title, updates.status === 'completed' ? 'completed' : 'status_changed', `→ ${updates.status}`);
-      } else {
-        log(id, t.title, 'updated');
+      if (tasksRes.data) {
+        setTasks(tasksRes.data.map(t => ({
+          id: t.id,
+          title: t.title,
+          description: t.description,
+          priority: t.priority as Priority,
+          status: t.status as TaskStatus,
+          category: t.category,
+          tags: t.tags || [],
+          dueDate: t.due_date,
+          subtasks: (t.subtasks as any[] || []) as Subtask[],
+          recurrence: t.recurrence as Task['recurrence'],
+          createdAt: t.created_at,
+          updatedAt: t.updated_at,
+        })));
       }
-      return updated;
-    }));
-  }, [log]);
 
-  const deleteTask = useCallback((id: string) => {
-    setTasks(prev => {
-      const t = prev.find(x => x.id === id);
-      if (t) log(id, t.title, 'deleted');
-      return prev.filter(x => x.id !== id);
-    });
-  }, [log]);
+      if (activityRes.data) {
+        setActivity(activityRes.data.map(a => ({
+          id: a.id,
+          taskId: a.task_id,
+          taskTitle: a.task_title,
+          action: a.action as ActivityEntry['action'],
+          detail: a.detail || undefined,
+          timestamp: a.created_at,
+        })));
+      }
+      setLoading(false);
+    };
 
-  const toggleSubtask = useCallback((taskId: string, subtaskId: string) => {
-    setTasks(prev => prev.map(t => {
-      if (t.id !== taskId) return t;
-      const sub = t.subtasks.find(s => s.id === subtaskId);
-      if (sub) log(taskId, t.title, 'subtask_completed', sub.completed ? `Unchecked "${sub.title}"` : `Checked "${sub.title}"`);
-      return {
-        ...t,
-        subtasks: t.subtasks.map(s => s.id === subtaskId ? { ...s, completed: !s.completed } : s),
-        updatedAt: new Date().toISOString(),
+    fetchData();
+  }, [user]);
+
+  const log = useCallback(async (taskId: string, taskTitle: string, action: ActivityEntry['action'], detail?: string) => {
+    if (!user) return;
+    const { data } = await supabase.from('activity_log').insert({
+      user_id: user.id, task_id: taskId, task_title: taskTitle, action, detail,
+    }).select().single();
+    if (data) {
+      setActivity(prev => [{
+        id: data.id, taskId: data.task_id, taskTitle: data.task_title,
+        action: data.action as ActivityEntry['action'], detail: data.detail || undefined, timestamp: data.created_at,
+      }, ...prev].slice(0, 200));
+    }
+  }, [user]);
+
+  const addTask = useCallback(async (task: Omit<Task, 'id' | 'createdAt' | 'updatedAt'>) => {
+    if (!user) return;
+    const { data } = await supabase.from('tasks').insert({
+      user_id: user.id, title: task.title, description: task.description,
+      priority: task.priority, status: task.status, category: task.category,
+      tags: task.tags, due_date: task.dueDate, subtasks: task.subtasks as any,
+      recurrence: task.recurrence, sort_order: 0,
+    }).select().single();
+
+    if (data) {
+      const newTask: Task = {
+        id: data.id, title: data.title, description: data.description,
+        priority: data.priority as Priority, status: data.status as TaskStatus,
+        category: data.category, tags: data.tags || [], dueDate: data.due_date,
+        subtasks: (data.subtasks as any[] || []) as Subtask[],
+        recurrence: data.recurrence as Task['recurrence'],
+        createdAt: data.created_at, updatedAt: data.updated_at,
       };
-    }));
-  }, [log]);
+      setTasks(prev => [newTask, ...prev]);
+      log(newTask.id, newTask.title, 'created');
+    }
+  }, [user, log]);
 
-  const addSubtask = useCallback((taskId: string, title: string) => {
-    const subtask: Subtask = { id: generateId(), title, completed: false };
-    setTasks(prev => prev.map(t => {
-      if (t.id !== taskId) return t;
-      return { ...t, subtasks: [...t.subtasks, subtask], updatedAt: new Date().toISOString() };
-    }));
-  }, []);
+  const updateTask = useCallback(async (id: string, updates: Partial<Task>) => {
+    if (!user) return;
+    const dbUpdates: any = {};
+    if (updates.title !== undefined) dbUpdates.title = updates.title;
+    if (updates.description !== undefined) dbUpdates.description = updates.description;
+    if (updates.priority !== undefined) dbUpdates.priority = updates.priority;
+    if (updates.status !== undefined) dbUpdates.status = updates.status;
+    if (updates.category !== undefined) dbUpdates.category = updates.category;
+    if (updates.tags !== undefined) dbUpdates.tags = updates.tags;
+    if (updates.dueDate !== undefined) dbUpdates.due_date = updates.dueDate;
+    if (updates.subtasks !== undefined) dbUpdates.subtasks = updates.subtasks;
+    if (updates.recurrence !== undefined) dbUpdates.recurrence = updates.recurrence;
 
-  const deleteSubtask = useCallback((taskId: string, subtaskId: string) => {
-    setTasks(prev => prev.map(t => {
-      if (t.id !== taskId) return t;
-      return { ...t, subtasks: t.subtasks.filter(s => s.id !== subtaskId), updatedAt: new Date().toISOString() };
-    }));
-  }, []);
+    const { data } = await supabase.from('tasks').update(dbUpdates).eq('id', id).select().single();
+    if (data) {
+      const oldTask = tasks.find(t => t.id === id);
+      setTasks(prev => prev.map(t => t.id !== id ? t : {
+        id: data.id, title: data.title, description: data.description,
+        priority: data.priority as Priority, status: data.status as TaskStatus,
+        category: data.category, tags: data.tags || [], dueDate: data.due_date,
+        subtasks: (data.subtasks as any[] || []) as Subtask[],
+        recurrence: data.recurrence as Task['recurrence'],
+        createdAt: data.created_at, updatedAt: data.updated_at,
+      }));
+      if (oldTask && updates.status && updates.status !== oldTask.status) {
+        log(id, oldTask.title, updates.status === 'completed' ? 'completed' : 'status_changed', `→ ${updates.status}`);
+      } else if (oldTask) {
+        log(id, oldTask.title, 'updated');
+      }
+    }
+  }, [user, tasks, log]);
 
-  const reorderTasks = useCallback((activeId: string, overId: string) => {
+  const deleteTask = useCallback(async (id: string) => {
+    if (!user) return;
+    const t = tasks.find(x => x.id === id);
+    await supabase.from('tasks').delete().eq('id', id);
+    setTasks(prev => prev.filter(x => x.id !== id));
+    if (t) log(id, t.title, 'deleted');
+  }, [user, tasks, log]);
+
+  const toggleSubtask = useCallback(async (taskId: string, subtaskId: string) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+    const updatedSubtasks = task.subtasks.map(s => s.id === subtaskId ? { ...s, completed: !s.completed } : s);
+    const sub = task.subtasks.find(s => s.id === subtaskId);
+    await updateTask(taskId, { subtasks: updatedSubtasks });
+    if (sub) log(taskId, task.title, 'subtask_completed', sub.completed ? `Unchecked "${sub.title}"` : `Checked "${sub.title}"`);
+  }, [tasks, updateTask, log]);
+
+  const addSubtask = useCallback(async (taskId: string, title: string) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+    const subtask: Subtask = { id: crypto.randomUUID(), title, completed: false };
+    await updateTask(taskId, { subtasks: [...task.subtasks, subtask] });
+  }, [tasks, updateTask]);
+
+  const deleteSubtask = useCallback(async (taskId: string, subtaskId: string) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+    await updateTask(taskId, { subtasks: task.subtasks.filter(s => s.id !== subtaskId) });
+  }, [tasks, updateTask]);
+
+  const reorderTasks = useCallback(async (activeId: string, overId: string) => {
     setTasks(prev => {
       const oldIndex = prev.findIndex(t => t.id === activeId);
       const newIndex = prev.findIndex(t => t.id === overId);
@@ -101,6 +159,10 @@ export function useTaskStore() {
       const result = [...prev];
       const [moved] = result.splice(oldIndex, 1);
       result.splice(newIndex, 0, moved);
+      // Update sort orders in background
+      result.forEach((t, i) => {
+        supabase.from('tasks').update({ sort_order: i }).eq('id', t.id).then(() => {});
+      });
       return result;
     });
   }, []);
@@ -116,19 +178,42 @@ export function useTaskStore() {
     URL.revokeObjectURL(url);
   }, [tasks, activity]);
 
-  const importData = useCallback((file: File) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const data = JSON.parse(e.target?.result as string);
-        if (data.tasks) setTasks(data.tasks);
-        if (data.activity) setActivity(data.activity);
-      } catch { console.error('Invalid backup file'); }
-    };
-    reader.readAsText(file);
-  }, []);
+  const importData = useCallback(async (file: File) => {
+    if (!user) return;
+    const text = await file.text();
+    try {
+      const data = JSON.parse(text);
+      if (data.tasks && Array.isArray(data.tasks)) {
+        for (const task of data.tasks) {
+          await supabase.from('tasks').insert({
+            user_id: user.id, title: task.title, description: task.description || '',
+            priority: task.priority || 'medium', status: task.status || 'pending',
+            category: task.category || 'personal', tags: task.tags || [],
+            due_date: task.dueDate || null, subtasks: task.subtasks || [],
+            recurrence: task.recurrence || 'none', sort_order: 0,
+          });
+        }
+        // Refetch
+        const { data: fresh } = await supabase.from('tasks').select('*').order('sort_order').order('created_at', { ascending: false });
+        if (fresh) {
+          setTasks(fresh.map(t => ({
+            id: t.id, title: t.title, description: t.description,
+            priority: t.priority as Priority, status: t.status as TaskStatus,
+            category: t.category, tags: t.tags || [], dueDate: t.due_date,
+            subtasks: (t.subtasks as any[] || []) as Subtask[],
+            recurrence: t.recurrence as Task['recurrence'],
+            createdAt: t.created_at, updatedAt: t.updated_at,
+          })));
+        }
+      }
+    } catch { console.error('Invalid backup file'); }
+  }, [user]);
 
-  const clearActivity = useCallback(() => setActivity([]), []);
+  const clearActivity = useCallback(async () => {
+    if (!user) return;
+    await supabase.from('activity_log').delete().eq('user_id', user.id);
+    setActivity([]);
+  }, [user]);
 
   const stats = {
     total: tasks.length,
@@ -140,7 +225,7 @@ export function useTaskStore() {
   };
 
   return {
-    tasks, activity, addTask, updateTask, deleteTask, toggleSubtask, addSubtask,
+    tasks, activity, loading, addTask, updateTask, deleteTask, toggleSubtask, addSubtask,
     deleteSubtask, reorderTasks, exportData, importData, clearActivity, stats,
   };
 }

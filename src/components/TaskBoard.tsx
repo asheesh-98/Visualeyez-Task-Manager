@@ -11,7 +11,8 @@ import BackupRestore from './BackupRestore';
 import ThemeToggle from './ThemeToggle';
 import { useTaskStore } from '@/hooks/useTaskStore';
 import { Button } from '@/components/ui/button';
-import { Plus, ListTodo, Menu, LayoutList, LayoutGrid, CalendarDays, Keyboard } from 'lucide-react';
+import { Plus, ListTodo, Menu, LayoutList, LayoutGrid, CalendarDays, Keyboard, LogOut } from 'lucide-react';
+import { useAuth } from '@/hooks/useAuth';
 import { AnimatePresence, motion } from 'framer-motion';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -26,6 +27,7 @@ const viewModes: { id: ViewMode; icon: React.ElementType; label: string }[] = [
 ];
 
 const TaskBoard = () => {
+  const { signOut } = useAuth();
   const { tasks, activity, addTask, updateTask, deleteTask, toggleSubtask, addSubtask, deleteSubtask, reorderTasks, exportData, importData, clearActivity, stats } = useTaskStore();
 
   const [formOpen, setFormOpen] = useState(false);
@@ -171,6 +173,15 @@ const TaskBoard = () => {
               <BackupRestore onExport={exportData} onImport={importData} />
               <ActivityLog activity={activity} onClear={clearActivity} />
               <ThemeToggle />
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => signOut()}>
+                    <LogOut size={16} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-xs">Sign Out</TooltipContent>
+              </Tooltip>
 
               <Tooltip>
                 <TooltipTrigger asChild>
