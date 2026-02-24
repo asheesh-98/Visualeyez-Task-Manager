@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { Navigate } from 'react-router-dom';
+import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -17,6 +18,9 @@ const Auth = () => {
   const [displayName, setDisplayName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [showForgot, setShowForgot] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotSubmitting, setForgotSubmitting] = useState(false);
 
   if (loading) {
     return (
@@ -44,6 +48,17 @@ const Auth = () => {
     setSubmitting(false);
   };
 
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setForgotSubmitting(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    if (error) toast.error(error.message);
+    else toast.success('Check your email for a password reset link!');
+    setForgotSubmitting(false);
+  };
+
   const handleGoogleSignIn = async () => {
     setGoogleLoading(true);
     const result = await lovable.auth.signInWithOAuth("google", {
@@ -54,6 +69,41 @@ const Auth = () => {
       setGoogleLoading(false);
     }
   };
+
+  if (showForgot) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+        <div className="absolute top-4 right-4"><ThemeToggle /></div>
+        <div className="w-full max-w-sm">
+          <div className="text-center mb-8">
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary/10 mb-4">
+              <ListTodo className="h-7 w-7 text-primary" />
+            </div>
+            <h1 className="text-2xl font-bold tracking-tight">Reset Password</h1>
+            <p className="text-sm text-muted-foreground mt-1">Enter your email to receive a reset link</p>
+          </div>
+          <form onSubmit={handleForgotPassword} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="forgot-email">Email</Label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input id="forgot-email" type="email" placeholder="you@example.com" value={forgotEmail} onChange={e => setForgotEmail(e.target.value)} className="pl-10" required />
+              </div>
+            </div>
+            <Button type="submit" className="w-full gap-2" disabled={forgotSubmitting}>
+              {forgotSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+              Send Reset Link
+            </Button>
+          </form>
+          <p className="text-center text-sm text-muted-foreground mt-6">
+            <button onClick={() => setShowForgot(false)} className="text-primary hover:underline font-medium">
+              Back to sign in
+            </button>
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
@@ -126,7 +176,15 @@ const Auth = () => {
           Google
         </Button>
 
-        <p className="text-center text-sm text-muted-foreground mt-6">
+        {!isSignUp && (
+          <p className="text-center text-sm text-muted-foreground mt-4">
+            <button onClick={() => setShowForgot(true)} className="text-primary hover:underline font-medium">
+              Forgot your password?
+            </button>
+          </p>
+        )}
+
+        <p className="text-center text-sm text-muted-foreground mt-4">
           {isSignUp ? 'Already have an account?' : "Don't have an account?"}{' '}
           <button onClick={() => setIsSignUp(!isSignUp)} className="text-primary hover:underline font-medium">
             {isSignUp ? 'Sign in' : 'Sign up'}
